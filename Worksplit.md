@@ -464,4 +464,4 @@ By the end of this module, the team should have:
 
 This work split gives each member a separate technical responsibility while ensuring that the complete project is developed collaboratively.
 The team will first create a basic UDP file-transfer system, then add reliability, sliding-window flow control, network emulation, and
-performance analysis. The final outcome will be a working reliable file-transfer protocol implemented over UDP and evaluated under different network conditions.
+performance analysis. The final outcome will be a working reliable file-transfer protocol implemented over UDP and evaluated under different network conditions
