@@ -1,0 +1,9 @@
+This is a sample small text file for testing UDP file transfer.
+
+It contains plain text that should be transmitted byte-for-byte over UDP.
+
+The file is intentionally kept small (under 1 KB) to fit within a single UDP datagram for the Week 1 milestone.
+
+Week 2 will handle file chunking for larger files.
+
+End of test file.
