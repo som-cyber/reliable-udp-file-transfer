@@ -1,80 +1,133 @@
 #!/usr/bin/env python3
-"""UDP Receiver - Listens for incoming UDP datagrams and displays or saves them."""
+"""
+UDP Receiver - Week 2 Milestone (Packetization)
 
-import argparse
-from pathlib import Path
+A UDP receiver that handles packetized data with sequence numbers,
+checksums, and file reconstruction supporting out-of-order arrival.
+"""
+
 import socket
+import argparse
+import sys
+from packet import Packet, PACKET_TYPE_START, PACKET_TYPE_DATA, PACKET_TYPE_END
+from file_utils import reconstruct_file_from_dict
 
 
-def receive_messages(host: str, port: int, output_file: str = None) -> None:
-    """Listens for incoming UDP datagrams continuously until interrupted."""
-    # Create a UDP socket and automatically close it when finished
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        try:
-            # Bind the socket to the chosen IP address and port
-            sock.bind((host, port))
-            print(f"Listening on {host}:{port}")
-            print("Waiting for datagrams... (Press Ctrl+C to stop)")
+def receive_packets(host: str, port: int, output_file: str = None) -> None:
 
-            # Keep listening for messages indefinitely
-            while True:
-                # Receive up to 65,535 bytes (maximum size of a UDP datagram)
-                data, addr = sock.recvfrom(65535)
-
-                # Try to decode the received raw bytes into readable text
-                try:
-                    message = data.decode("utf-8")
-                    print(f"Received from {addr}: {message}")
-                except UnicodeDecodeError:
-                    # If decoding fails, the data is binary (e.g., a file)
-                    print(f"Received {len(data)} bytes from {addr}")
+    # Create UDP socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    # Storage for received packets keyed by sequence number
+    received_packets = {}
+    expected_packet_count = None
+    transfer_active = False
+    
+    try:
+        # Bind socket to host and port
+        sock.bind((host, port))
+        print(f"Listening on {host}:{port}")
+        print("Waiting for packets... (Press Ctrl+C to stop)")
+        
+        while True:
+            # Receive data
+            data, addr = sock.recvfrom(65535)  # Max UDP datagram size
+            
+            # Deserialize packet
+            packet = Packet.deserialize(data)
+            
+            if packet is None:
+                print(f"Received invalid packet from {addr}")
+                continue
+            
+            # Verify checksum
+            is_valid, status = packet.verify_integrity()
+            
+            if not is_valid:
+                print(f"Received CORRUPTED packet from {addr}: {packet}")
+                continue
+            
+            # Handle different packet types
+            if packet.packet_type == PACKET_TYPE_START:
+                print(f"Received START packet from {addr}")
+                received_packets.clear()
+                expected_packet_count = None
+                transfer_active = True
+                
+            elif packet.packet_type == PACKET_TYPE_DATA:
+                if not transfer_active:
+                    print(f"Received DATA packet before START from {addr}")
+                    continue
+                    
+                # Store packet by sequence number
+                received_packets[packet.sequence_number] = packet
+                print(f"Received DATA packet {packet.sequence_number} from {addr} " f"({packet.payload_length} bytes) - {status}")
+                
+            elif packet.packet_type == PACKET_TYPE_END:
+                print(f"Received END packet from {addr}")
+                expected_packet_count = packet.sequence_number
+                transfer_active = False
+                
+                # Reconstruct file if output file specified
+                if output_file and received_packets:
+                    print(f"Reconstructing file from {len(received_packets)} packets...")
+                    success = reconstruct_file_from_dict(
+                        received_packets, 
+                        output_file, 
+                        expected_packet_count
+                    )
+                    
+                    if success:
+                        print(f"File reconstructed successfully: {output_file}")
+                    else:
+                        print(f"File reconstruction failed")
+                    
+                    # Clear for next transfer
+                    received_packets.clear()
+                else:
+                    print(f"Received {len(received_packets)} data packets")
                     if not output_file:
-                        print(
-                            "(Binary data - use --output to save to file)"
-                        )
-
-                # Save the raw data to a file if an output path was provided
-                if output_file:
-                    Path(output_file).write_bytes(data)
-                    print(f"Saved to: {output_file}")
-
-        except KeyboardInterrupt:
-            # Gracefully handle Ctrl+C exit without dumping stack traces
-            print("\nReceiver stopped by user")
-        except Exception as e:
-            print(f"Error: {e}")
+                        print("(No output file specified - data not saved)")
+                    
+                    received_packets.clear()
+            
+            else:
+                print(f"Received unknown packet type {packet.packet_type} from {addr}")
+                
+    except KeyboardInterrupt:
+        print("\nReceiver stopped by user")
+        if received_packets:
+            print(f"Received {len(received_packets)} packets before stopping")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        sock.close()
 
 
 def main():
-    # Set up command-line arguments parser
     parser = argparse.ArgumentParser(
-        description="UDP Receiver - Receive messages or files over UDP"
-    )
-
-    # Define arguments with default values
-    parser.add_argument(
-        "--host",
-        default="127.0.0.1",
-        help="Host IP address to bind to (default: 127.0.0.1)",
+        description='UDP Receiver - Receive packetized messages or files over UDP'
     )
     parser.add_argument(
-        "--port",
+        '--host',
+        default='127.0.0.1',
+        help='Host IP address to bind to (default: 127.0.0.1)'
+    )
+    parser.add_argument(
+        '--port',
         type=int,
         default=5001,
-        help="Port number to bind to (default: 5001)",
+        help='Port number to bind to (default: 5001)'
     )
     parser.add_argument(
-        "--output",
-        help="Optional file path to save received data",
+        '--output',
+        help='Optional file path to save reconstructed data'
     )
-
-    # Parse inputs given in command line
+    
     args = parser.parse_args()
+    
+    receive_packets(args.host, args.port, args.output)
 
-    # Start listening for messages
-    receive_messages(args.host, args.port, args.output)
 
-
-# Run main function when executing the script directly
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

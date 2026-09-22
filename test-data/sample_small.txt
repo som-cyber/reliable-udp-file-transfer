@@ -1,9 +1,1389 @@
-This is a sample small text file for testing UDP file transfer.
+Product Requirements Document
+Packetization and Packet Format (Week 2 Milestone)
+Project: Reliable UDP File Transfer with Sliding Window
+Module: UDP Communication & Packet Format
+Module Owner: Somprakash
+Milestone Scope: Week 2 — Packetization and Packet Format only
+---
+1. Overview
+This PRD covers the second milestone of Somprakash's module: turning the raw send/receive from Week 1 into a real packet-based protocol — a defined header format, serialization, file chunking, sequence numbers, checksums, and receiver-side reconstruction. It builds directly on the Week 1 UDP sender/receiver and is a prerequisite for everything Abhipsa (reliability) and Sahil (sliding window) will do next.
+2. Background
+Week 1 proved that raw bytes can move between sender and receiver over UDP. That's not enough on its own: a real file transfer needs a way to split a file into pieces, label each piece so it can be identified and reassembled regardless of arrival order, and detect corruption. This milestone builds that packet layer.
+3. Goals
+Define a single, fixed packet format that sender and receiver — and eventually Abhipsa's and Sahil's modules — all agree on.
+Split arbitrary files into chunks and wrap each chunk in a packet with a sequence number.
+Detect corrupted packets via checksum.
+Reconstruct the original file correctly on the receiver side, even if packets arrive out of order.
+4. Scope
+In scope (this milestone)
+Finalizing the packet header format (type, sequence number, payload length, checksum, payload)
+`packet.py` — packet structure, creation, serialization, deserialization
+File chunking with a configurable chunk size
+Sequence numbering of packets
+Checksum generation and verification (`checksum.py`)
+Receiver-side storage-by-sequence-number and file reconstruction (including out-of-order arrival)
+Testing across different file sizes
+Documenting the packet format, if needed, for the rest of the team
+Out of scope (deferred)
+Item	Where it belongs
+ACK handling, timeout/RTO, retransmission	Abhipsa's module
+Duplicate packet detection/handling	Week 3 — Reliability Integration Prep
+Sliding window, Go-Back-N, Selective Repeat, flow control	Sahil's module
+Real network loss/delay/reorder simulation, load testing, graphs	Protanu's module
+Recovering from a detected corrupted packet (vs. just flagging it)	Abhipsa's module
+5. Functional Requirements
+ID	Requirement
+FR-1	Finalize a fixed packet header: Packet Type, Sequence Number, Payload Length, Checksum, followed by the Payload.
+FR-2	Implement `packet.py` with a `Packet` structure/class covering all header fields plus payload, and a way to construct one for a given chunk + sequence number.
+FR-3	Implement `serialize(packet) -> bytes` and `deserialize(data) -> Packet`, using a documented fixed binary layout.
+FR-4	Implement file chunking: split a file into fixed-size chunks (configurable size, e.g. 1024 bytes) to use as packet payloads.
+FR-5	Assign an increasing sequence number (0, 1, 2, …) to each data packet, matching its chunk's position in the file.
+FR-6	Implement `checksum.py`: generate a checksum over the payload when sending, and verify it on receipt, flagging each packet `VALID` or `CORRUPTED`.
+FR-7	Implement receiver-side reconstruction: store each payload keyed by its sequence number as packets arrive (in any order), then concatenate in sequence order to rebuild the original file.
+FR-8	Test the full pipeline (chunk → packet → serialize → send → receive → deserialize → reconstruct) across at least a few different file sizes.
+FR-9	Document the packet format and serialization scheme, if needed, so Abhipsa and Sahil can build on it without guessing the byte layout.
+6. Non-Functional Requirements
+The binary packet format must be fixed and clearly documented — everyone on the team encodes/decodes it the same way.
+Chunk size should be configurable, not hardcoded, since it affects both this module and Sahil's window sizing later.
+`checksum.py` should be independently testable, separate from packet/serialization logic.
+The packet `Packet Type` field should be designed to accommodate future values (e.g. `ACK`) even though only `DATA`/`START`/`END` are needed now.
+No performance targets yet — correctness of packetization and reconstruction is the bar for this milestone, not speed.
+7. Technical Stack (this milestone)
+Python 3
+`struct` — binary header packing/unpacking
+`hashlib` — checksum generation/verification
+`socket` — reused from Week 1 to actually send/receive the serialized packets
+Git + GitHub for version control
+8. Proposed Packet Format
+```
++------------------+
+| Packet Type      |   e.g. 1 byte  (DATA / START / END, extensible later)
++------------------+
+| Sequence Number  |   e.g. 4 bytes (unsigned int)
++------------------+
+| Payload Length   |   e.g. 2 bytes (unsigned short)
++------------------+
+| Checksum         |   size depends on algorithm chosen (see Open Questions)
++------------------+
+| Payload / Data   |   variable length, up to the configured chunk size
++------------------+
+```
+Exact field sizes and the checksum algorithm should be locked in as part of this milestone (see Open Questions) and then documented for the team.
+9. Proposed Repository Additions
+```
+src/
+├── udp_sender.py      (updated to build + send packets instead of raw bytes)
+├── udp_receiver.py    (updated to receive + reconstruct via packets)
+├── packet.py           (new)
+├── checksum.py         (new)
+└── file_utils.py       (new — chunking + reconstruction helpers)
+```
+10. Use Cases
+As a developer, I can hand `file_utils.py` a file path and get back an ordered list of fixed-size chunks.
+As a developer, I can wrap a chunk and its sequence number into a `Packet` and serialize it to bytes ready for `sendto()`.
+As a developer, I can deserialize incoming bytes back into a `Packet`, check its checksum, and know immediately whether it's valid.
+As a developer, I can feed the receiver packets in a shuffled order and still get back the exact original file.
+11. Acceptance Criteria / Definition of Done
+[ ] Packet format finalized and documented
+[ ] `packet.py` implemented (structure, creation, serialize, deserialize)
+[ ] Files can be split into chunks of a configurable size
+[ ] Every data packet carries a correct sequence number
+[ ] Checksum correctly flags valid vs. corrupted packets
+[ ] Receiver stores packets by sequence number and reconstructs the file correctly, including out-of-order arrival
+[ ] Tested against at least: a single-chunk file, a multi-chunk file, and a larger file
+[ ] Packet format documented well enough for Abhipsa/Sahil to build on
+[ ] Work committed to GitHub with message `feat: implement packet format and file packetization`
+12. Test Plan
+ID	Test	Expected Result
+TC-1	Serialize a packet, then deserialize it	All fields match the original exactly
+TC-2	Single-chunk file (smaller than one chunk size) round trip	Reconstructed file matches original byte-for-byte
+TC-3	Multi-chunk file (several chunks) round trip	Reconstructed file matches original byte-for-byte
+TC-4	Larger file (many chunks) round trip	Reconstructed file matches original; no missing/duplicated chunks
+TC-5	Feed the receiver packets in shuffled (out-of-order) order	File still reconstructs correctly
+TC-6	Deliberately corrupt one packet's payload before checksum verification	Checksum check correctly flags it `CORRUPTED`
+13. Assumptions
+Default chunk size is 1024 bytes unless the team agrees on a different value.
+Sender/receiver from Week 1 are extended in place (not rewritten) to send/receive serialized packets instead of raw bytes.
+"Out-of-order reconstruction" here means packets are simply stored and reordered by sequence number in a local test — it does not require simulating real network reordering (that's Protanu's territory).
+A detected `CORRUPTED` packet is just flagged/logged at this stage; requesting a retransmission is Abhipsa's responsibility, not this milestone's.
+Duplicate packets are not specifically tested here (that's called out as a Week 3 task in the plan).
+14. Dependencies / Coordination
+The packet format (especially `Packet Type` values and field sizes) should be shared with Abhipsa and Sahil once finalized, since their modules will read/extend it.
+Chunk size choice affects Sahil's window-size planning, so it's worth flagging once decided.
 
-It contains plain text that should be transmitted byte-for-byte over UDP.
+# Product Requirements Document
+## Basic UDP Communication (Week 1 Milestone)
 
-The file is intentionally kept small (under 1 KB) to fit within a single UDP datagram for the Week 1 milestone.
+**Project:** Reliable UDP File Transfer with Sliding Window
+**Module:** UDP Communication & Packet Format
+**Module Owner:** Somprakash
+**Milestone Scope:** Week 1 — Basic UDP Communication only
 
-Week 2 will handle file chunking for larger files.
+---
 
-End of test file.
+## 1. Overview
+
+This PRD covers only the **first milestone** of Somprakash's module: getting a minimal UDP sender and receiver working. It does **not** cover packet format, sequence numbers, checksums, or file chunking — those belong to Week 2 and later, and are intentionally out of scope here.
+
+The goal of this milestone is to lay the transport-level groundwork that every later component (packet format, reliability, sliding window) will sit on top of.
+
+## 2. Background
+
+The overall project splits work across four people: Somprakash (UDP communication & packet format), Abhipsa (reliability — ACKs, retransmission), Sahil (sliding window / flow control), and Protanu (network simulation & performance testing). Before any of that can be built, there needs to be a working, agreed-upon way for two processes to exchange raw bytes over UDP. That's what this milestone delivers.
+
+## 3. Goals
+
+- Prove that a UDP sender and receiver can exchange data end-to-end.
+- Establish the repo structure and environment conventions the rest of the module (and eventually the team) will build on.
+- Confirm that raw bytes — including the contents of a small file — arrive intact, with no transport-level surprises, before any packetization logic is added on top.
+
+## 4. Scope
+
+### In scope (this milestone)
+- Python environment setup
+- Repository/folder structure
+- `udp_sender.py` — minimal UDP sender
+- `udp_receiver.py` — minimal UDP receiver
+- Sending/receiving a simple text message
+- Sending/receiving a small file's raw bytes (single datagram, no chunking)
+- Basic documentation of how to run both scripts
+
+### Out of scope (deferred)
+| Item | Where it belongs |
+|---|---|
+| Packet header (type, sequence number, length, checksum) | Week 2 — Packetization |
+| Serialization / deserialization | Week 2 — Packetization |
+| File chunking for files larger than one datagram | Week 2 — Packetization |
+| Checksum-based corruption detection | Week 2 — Packetization |
+| Sequence-number-based storage/reconstruction | Week 2 — Packetization |
+
+## 5. Functional Requirements
+
+| ID | Requirement |
+|---|---|
+| FR-1 | Set up a Python 3 environment for the module (no third-party packages required at this stage). |
+| FR-2 | Create the repository structure that will hold the sender, receiver, and (later) packet-format modules. |
+| FR-3 | `udp_sender.py` shall create a UDP socket and send a text message to a specified host/port using `sendto()`. |
+| FR-4 | `udp_receiver.py` shall create and bind a UDP socket, then receive and print incoming data using `recvfrom()`. |
+| FR-5 | Sending a simple message (e.g. `"Hello"`) from the sender shall result in the receiver printing that exact message. |
+| FR-6 | The sender shall be able to read a small file's contents into memory and send its raw bytes in a single UDP datagram; the receiver shall write the received bytes to an output file. |
+| FR-7 | Basic usage (how to run sender/receiver, expected output) shall be documented in the repo (README or module docstrings). |
+
+## 6. Non-Functional Requirements
+
+- Uses only the Python 3 standard library (`socket`) for this milestone — no Flask, Scapy, Wireshark, etc.
+- Runs correctly on localhost; host/port should be easy to change for later LAN testing with teammates.
+- Code should stay simple and readable — this is the foundation other modules (packet format, reliability, sliding window) will extend.
+- No performance targets at this stage; correctness of basic transmission is the only bar.
+
+## 7. Technical Stack (this milestone only)
+
+- Python 3
+- `socket` module
+- Git + GitHub for version control
+
+> `struct` and `hashlib` are part of the module's overall stack but aren't needed until Week 2 (packet header serialization and checksums).
+
+## 8. Proposed Repository Structure
+
+```
+project-root/
+├── src/
+│   ├── udp_sender.py
+│   └── udp_receiver.py
+├── test-data/
+│   └── sample_small.txt
+├── README.md
+└── .gitignore
+```
+
+`packet.py`, `checksum.py`, and `file_utils.py` are introduced starting Week 2, per the overall module plan.
+
+## 9. Use Cases
+
+- As a developer, I can run `udp_receiver.py` and have it wait for incoming datagrams on a given host/port.
+- As a developer, I can run `udp_sender.py` to send a short text message to the receiver and see it appear on the receiver's console.
+- As a developer, I can point the sender at a small text file and have its exact bytes arrive at the receiver, which writes them to an output file I can diff against the original.
+
+## 10. Acceptance Criteria / Definition of Done
+
+- [ ] Python environment set up and documented
+- [ ] Repository structure created and committed
+- [ ] `udp_sender.py` sends a text message to a specified host/port
+- [ ] `udp_receiver.py` binds, listens, and prints/logs received data
+- [ ] A `"Hello"`-style message sent by the sender is correctly received and displayed
+- [ ] A small test file's bytes are sent and received byte-for-byte, with no corruption
+- [ ] Usage is documented so a teammate could run sender/receiver independently
+- [ ] Work committed to GitHub with message `feat: add basic UDP sender and receiver`
+
+## 11. Test Plan
+
+| ID | Test | Expected Result |
+|---|---|---|
+| TC-1 | Start receiver, then sender sends `"Hello"` | Receiver prints `"Hello"` |
+| TC-2 | Sender sends an empty message | Receiver handles it without crashing |
+| TC-3 | Sender sends a small text file's contents (e.g. <1 KB) | Bytes received match the original file exactly |
+| TC-4 | Sender runs before receiver is listening | Document observed behavior (datagram is silently dropped — expected for connectionless UDP) |
+| TC-5 | (Stretch) Run sender/receiver on two machines on the same network | Message/file still arrives correctly over a real IP instead of localhost |
+
+## 12. Assumptions
+
+- Testing happens on localhost (`127.0.0.1`) by default; LAN testing with teammates is a stretch goal, not a hard requirement, for this milestone.
+- Port number is the developer's own choice for now (e.g. `5001`) and will be standardized with the team once Week 2 packet-format work begins.
+- The test file for this milestone is small plain text (well under typical safe UDP payload sizes — a few hundred bytes to ~1 KB), so no chunking is needed yet.
+- No handling of packet loss, duplication, or reordering is expected at this stage — default UDP behavior is acceptable for Week 1.
+
+## 13. Dependencies / Coordination
+
+- Port/host conventions should be agreed upon with Abhipsa, Sahil, and Protanu before integration work begins.
+- This milestone doesn't block, or get blocked by, teammates' modules.
+
+# Work Split and Weekly Development Plan
+
+## Project: Reliable UDP File Transfer with Sliding Window
+
+This document explains the responsibilities of all four team members and
+the week-wise development plan for the eight-week project.
+
+The project will build a reliable file-transfer system over UDP. Since
+UDP does not guarantee delivery, ordering, or duplicate prevention, our
+system will add reliability mechanisms such as packetization, sequence
+numbers, checksums, acknowledgements, timeouts, retransmissions,
+sliding-window flow control, and network emulation.
+
+------------------------------------------------------------------------
+
+## 1. Team Members and Main Responsibilities
+
+  --------------------------------------------------------------------------------
+  Member                  Main Module             Primary Responsibility
+  ----------------------- ----------------------- --------------------------------
+  **Somprakash**          UDP Communication and   UDP sender/receiver, packet
+                          Packet Format           structure, sequence numbers,
+                                                  serialization/deserialization,
+                                                  checksum, and file
+                                                  reconstruction
+
+  **Abhipsa**             Reliability Mechanism   ACK handling, timeout/RTO,
+                                                  packet-loss detection,
+                                                  retransmission, duplicate
+                                                  packets, and out-of-order
+                                                  packets
+
+  **Sahil**               Sliding Window and Flow Sliding-window protocol,
+                          Control                 Go-Back-N/Selective Repeat,
+                                                  sender/receiver window
+                                                  management, and transfer
+                                                  synchronization
+
+  **Protanu**             Network Emulator and    Packet loss/delay/reordering
+                          Performance Analysis    emulator, load testing,
+                                                  performance measurement,
+                                                  experiment automation, graphs,
+                                                  and result analysis
+  --------------------------------------------------------------------------------
+
+> **Important:** Although each member has a main module, all members
+> will participate in integration, testing, debugging, documentation,
+> GitHub updates, and the final demonstration.
+
+------------------------------------------------------------------------
+
+# 2. Detailed Work Responsibilities
+
+## 2.1 Somprakash --- UDP Communication and Packet Format
+
+### Main Goal
+
+Build the basic UDP communication layer and define how data will be
+divided into packets, transmitted, received, checked, and reconstructed.
+
+### Detailed Responsibilities
+
+#### A. UDP Sender
+
+-   Create a UDP socket.
+-   Read the selected file from storage.
+-   Divide the file into smaller chunks.
+-   Create packets from those chunks.
+-   Send packets to the receiver.
+-   Track the packet sequence number.
+-   Handle the end of file-transfer process.
+
+#### B. UDP Receiver
+
+-   Create a UDP socket and bind it to a port.
+-   Receive UDP packets.
+-   Extract packet information.
+-   Pass received data to the reliability and reconstruction modules.
+-   Save the received file to disk.
+
+#### C. Packet Structure
+
+Design a common packet format for communication between sender and
+receiver.
+
+A packet may contain:
+
+``` text
++------------------+
+| Packet Type      |
++------------------+
+| Sequence Number  |
++------------------+
+| Acknowledgement  |
++------------------+
+| Payload Length   |
++------------------+
+| Checksum         |
++------------------+
+| Payload/Data     |
++------------------+
+```
+
+Possible packet types:
+
+-   `DATA`
+-   `ACK`
+-   `START`
+-   `END`
+-   `FINISH`
+-   `ERROR`
+
+#### D. Sequence Numbers
+
+-   Assign a unique sequence number to each data packet.
+-   Use sequence numbers to identify missing packets.
+-   Support detection of duplicate and out-of-order packets.
+
+#### E. Serialization and Deserialization
+
+-   Convert packet fields into bytes before transmission.
+-   Convert received bytes back into packet fields.
+-   Validate packet length and packet format.
+
+#### F. Checksum
+
+-   Calculate a checksum for packet contents.
+-   Attach the checksum to each packet.
+-   Recalculate and verify the checksum at the receiver.
+-   Reject corrupted packets.
+
+#### G. File Reconstruction
+
+-   Store valid received packet data.
+-   Arrange packet data in the correct order.
+-   Reconstruct the original file.
+-   Verify that the reconstructed file matches the original file.
+
+### Expected Output
+
+By the end of this module, the team should have:
+
+-   A working UDP sender.
+-   A working UDP receiver.
+-   A documented packet format.
+-   Packet serialization/deserialization functions.
+-   Sequence-number handling.
+-   Checksum verification.
+-   Basic file reconstruction.
+
+### Suggested Files
+
+``` text
+src/
+├── udp_sender.py
+├── udp_receiver.py
+├── packet.py
+├── checksum.py
+└── file_utils.py
+```
+
+------------------------------------------------------------------------
+
+## 2.2 Abhipsa --- Reliability Mechanism
+
+### Main Goal
+
+Make UDP file transfer reliable by detecting lost packets and requesting
+or performing retransmission.
+
+### Detailed Responsibilities
+
+#### A. ACK Handling
+
+-   Receive acknowledgements from the receiver.
+-   Identify which packet has been acknowledged.
+-   Maintain the acknowledgement status of packets.
+-   Handle repeated or duplicate ACKs.
+
+Example:
+
+``` text
+Sender                  Receiver
+
+DATA 1  -------------------->
+        <-------------------- ACK 1
+
+DATA 2  -------------------->
+        <-------------------- ACK 2
+```
+
+#### B. Packet-Loss Detection
+
+-   Detect when an expected ACK is not received.
+-   Identify missing packet sequence numbers.
+-   Detect packet loss using timeout or acknowledgement information.
+
+#### C. Timeout Mechanism
+
+-   Start a timer after sending a packet or window.
+-   Wait for the expected ACK.
+-   Retransmit if the timer expires.
+-   Stop the timer when the expected ACK arrives.
+
+#### D. RTO Calculation
+
+RTO means **Retransmission Timeout**.
+
+The module will initially use a simple timeout value. If time permits,
+it may estimate timeout using measured round-trip time.
+
+The system should avoid:
+
+-   Waiting forever for an ACK.
+-   Retransmitting too quickly.
+-   Sending unnecessary duplicate packets.
+
+#### E. Retransmission
+
+-   Retransmit lost packets.
+-   Handle retransmission after timeout.
+-   Keep track of the number of retransmissions.
+-   Avoid losing already received data.
+
+#### F. Duplicate Packet Handling
+
+-   Detect packets that have already been received.
+-   Avoid writing duplicate data into the output file.
+-   Send an ACK again when necessary.
+
+#### G. Out-of-Order Packet Handling
+
+-   Detect packets that arrive before earlier packets.
+-   Temporarily store out-of-order packets if required.
+-   Deliver data to the file reconstruction module in the correct order.
+
+#### H. Error Handling
+
+Handle situations such as:
+
+-   Invalid packet format.
+-   Wrong checksum.
+-   Missing ACK.
+-   Duplicate ACK.
+-   Unexpected packet sequence.
+-   Receiver timeout.
+
+### Expected Output
+
+By the end of this module, the team should have:
+
+-   ACK processing.
+-   Timeout handling.
+-   Packet-loss detection.
+-   Retransmission logic.
+-   Duplicate packet handling.
+-   Out-of-order packet handling.
+-   Retransmission statistics.
+
+### Suggested Files
+
+``` text
+src/
+├── reliability.py
+├── ack_manager.py
+├── retransmission.py
+├── timeout.py
+└── receiver_buffer.py
+```
+
+------------------------------------------------------------------------
+
+## 2.3 Sahil --- Sliding Window and Flow Control
+
+### Main Goal
+
+Improve transfer performance by allowing multiple packets to be in
+transit instead of waiting for an ACK after every packet.
+
+### Detailed Responsibilities
+
+#### A. Sliding Window
+
+Implement a sender window that controls how many packets can be sent
+without receiving individual acknowledgements.
+
+Example:
+
+``` text
+Window Size = 4
+
+[1] [2] [3] [4]  → packets currently allowed to be sent
+```
+
+After ACK for packet 1:
+
+``` text
+[2] [3] [4] [5]
+```
+
+The window moves forward. This is why it is called a sliding window.
+
+#### B. Sender Window Management
+
+Maintain:
+
+-   Base sequence number.
+-   Next sequence number.
+-   Window size.
+-   Packets currently in transit.
+-   Acknowledged packets.
+-   Unacknowledged packets.
+
+#### C. Receiver Window Management
+
+Maintain:
+
+-   Expected packet number.
+-   Received packet buffer.
+-   Out-of-order packets.
+-   Acknowledgement status.
+-   Delivery order.
+
+#### D. Go-Back-N or Selective Repeat
+
+The team will implement one main sliding-window retransmission strategy.
+
+##### Go-Back-N
+
+If one packet is lost, retransmit the lost packet and all later
+unacknowledged packets.
+
+Example:
+
+``` text
+Sent:       1  2  3  4  5
+Received:   1  2     4  5
+
+Packet 3 is lost.
+
+Retransmit: 3  4  5
+```
+
+##### Selective Repeat
+
+If one packet is lost, retransmit only the missing packet.
+
+Example:
+
+``` text
+Sent:       1  2  3  4  5
+Received:   1  2     4  5
+
+Retransmit: 3 only
+```
+
+**Recommended implementation order:**
+
+1.  Implement a basic sliding window.
+2.  Implement Go-Back-N first because it is easier to debug.
+3.  Add Selective Repeat only if the core system is stable and time is
+    available.
+
+#### E. Flow Control
+
+-   Prevent the sender from overwhelming the receiver.
+-   Limit the number of packets in transit.
+-   Adjust sending according to the receiver window.
+-   Avoid buffer overflow.
+
+#### F. Transfer Synchronization
+
+-   Coordinate the sender and receiver.
+-   Handle start and end of transfer.
+-   Ensure all required packets are acknowledged.
+-   Confirm successful file completion.
+
+### Expected Output
+
+By the end of this module, the team should have:
+
+-   Working sliding-window logic.
+-   Sender and receiver window management.
+-   Go-Back-N or Selective Repeat.
+-   Flow-control mechanism.
+-   Transfer completion synchronization.
+-   Window-size configuration.
+
+### Suggested Files
+
+``` text
+src/
+├── sliding_window.py
+├── sender_window.py
+├── receiver_window.py
+├── go_back_n.py
+└── selective_repeat.py
+```
+
+------------------------------------------------------------------------
+
+## 2.4 Protanu --- Network Emulator and Performance Analysis
+
+### Main Goal
+
+Create controlled network conditions and measure how the reliable UDP
+protocol performs under packet loss, delay, and reordering.
+
+### Detailed Responsibilities
+
+#### A. Network Emulator
+
+Build a software layer between sender and receiver that can simulate
+unreliable network conditions.
+
+The emulator should support:
+
+-   Packet loss.
+-   Artificial delay.
+-   Packet reordering.
+-   Optional packet duplication.
+-   Configurable network conditions.
+
+Example:
+
+``` text
+Sender
+   |
+   v
+Network Emulator
+   |
+   +-- 10% packet loss
+   +-- 50 ms delay
+   +-- Packet reordering
+   |
+   v
+Receiver
+```
+
+#### B. Packet-Loss Simulation
+
+Allow the user to set packet-loss probability.
+
+Example values:
+
+``` text
+0%
+2%
+5%
+10%
+15%
+```
+
+#### C. Delay Simulation
+
+Add artificial delay to packets.
+
+Example values:
+
+``` text
+0 ms
+20 ms
+50 ms
+100 ms
+```
+
+#### D. Reordering Simulation
+
+Change the order of selected packets to check whether the receiver can
+handle out-of-order delivery.
+
+#### E. Load Testing
+
+Create a test tool that can run multiple file transfers or repeated
+transfers.
+
+Test variables may include:
+
+-   File size.
+-   Packet size.
+-   Packet-loss percentage.
+-   Network delay.
+-   Window size.
+-   Number of transfers.
+
+#### F. Performance Metrics
+
+Collect the following metrics:
+
+-   Total transfer time.
+-   Average latency.
+-   Throughput.
+-   Number of packets sent.
+-   Number of packets received.
+-   Number of retransmissions.
+-   Packet-loss rate.
+-   File completion status.
+-   Checksum verification result.
+
+#### G. Experiment Automation
+
+Create scripts that automatically:
+
+1.  Set network conditions.
+2.  Run the file transfer.
+3.  Collect results.
+4.  Save results in CSV format.
+5.  Repeat the experiment for different values.
+
+#### H. Graphs and Analysis
+
+Generate graphs such as:
+
+-   Packet loss vs. transfer time.
+-   Packet loss vs. throughput.
+-   Window size vs. throughput.
+-   Delay vs. completion time.
+-   Packet loss vs. retransmission count.
+-   File size vs. transfer time.
+-   UDP without reliability vs. Reliable UDP.
+
+### Expected Output
+
+By the end of this module, the team should have:
+
+-   A working network emulator.
+-   Automated experiments.
+-   CSV result files.
+-   Performance graphs.
+-   A comparison report.
+-   A clear explanation of the results.
+
+### Suggested Files
+
+``` text
+experiments/
+├── network_emulator.py
+├── load_generator.py
+├── metrics.py
+├── run_experiments.py
+├── analyze_results.py
+└── plots.py
+```
+
+------------------------------------------------------------------------
+
+# 3. Week-Wise Development Plan
+
+## Week 1 --- Project Setup and Basic UDP Communication
+
+### Target
+
+Set up the project structure and establish basic communication between a
+UDP sender and receiver.
+
+### Somprakash
+
+-   Create the initial UDP sender.
+-   Create the initial UDP receiver.
+-   Test sending a small message.
+-   Test sending a small file.
+-   Create the first packet structure.
+-   Document the basic communication flow.
+
+### Abhipsa
+
+-   Study UDP reliability problems.
+-   Define the ACK message format.
+-   Define possible packet types.
+-   Prepare the reliability module design.
+-   Document possible packet-loss cases.
+
+### Sahil
+
+-   Study sliding-window concepts.
+-   Decide the initial window structure.
+-   Prepare sender-window and receiver-window design.
+-   Compare Go-Back-N and Selective Repeat.
+-   Recommend the first protocol to implement.
+
+### Protanu
+
+-   Set up the GitHub repository and project folders.
+-   Prepare the README and contribution rules.
+-   Create the first test script.
+-   Prepare a basic transfer-time measurement method.
+-   Define future experiment metrics.
+
+### Week 1 Deliverables
+
+-   GitHub repository.
+-   Basic UDP sender and receiver.
+-   Initial packet format.
+-   Initial documentation.
+-   Basic file-transfer test.
+-   At least one meaningful commit from every member.
+
+------------------------------------------------------------------------
+
+## Week 2 --- Packetization, Sequence Numbers, Checksum, and File Reconstruction
+
+### Target
+
+Create a complete packet format and transfer a file in multiple packets.
+
+### Somprakash
+
+-   Implement file splitting.
+-   Add sequence numbers.
+-   Implement packet serialization.
+-   Implement packet deserialization.
+-   Implement checksum generation.
+-   Implement checksum verification.
+-   Implement file reconstruction.
+-   Test with small and medium files.
+
+### Abhipsa
+
+-   Review packet structure for reliability support.
+-   Add ACK packet fields to the packet design.
+-   Prepare logic for invalid or corrupted packets.
+-   Create test cases for missing and duplicate sequence numbers.
+
+### Sahil
+
+-   Prepare the sender and receiver window data structures.
+-   Define the relationship between sequence numbers and window
+    positions.
+-   Create a basic window-management prototype.
+
+### Protanu
+
+-   Create file-transfer test cases.
+-   Measure transfer time for different file sizes.
+-   Create a basic CSV result format.
+-   Prepare the network-emulator design.
+
+### Week 2 Deliverables
+
+-   Multi-packet file transfer.
+-   Sequence numbers.
+-   Checksum verification.
+-   File reconstruction.
+-   Initial automated tests.
+-   Packet format documentation.
+
+------------------------------------------------------------------------
+
+## Week 3 --- ACK, Timeout, Packet-Loss Detection, and Retransmission
+
+### Target
+
+Make the file-transfer system reliable using acknowledgements and
+retransmission.
+
+### Somprakash
+
+-   Integrate packet serialization with ACK packets.
+-   Ensure packet sequence numbers are correctly transmitted.
+-   Support packet types such as DATA, ACK, START, and END.
+
+### Abhipsa
+
+-   Implement ACK generation at the receiver.
+-   Implement ACK processing at the sender.
+-   Implement timeout handling.
+-   Implement packet-loss detection.
+-   Implement retransmission.
+-   Handle duplicate packets.
+-   Handle out-of-order packets.
+-   Count retransmissions.
+
+### Sahil
+
+-   Connect reliability logic with future sliding-window support.
+-   Define how ACKs will update sender-window state.
+-   Prepare Go-Back-N/Selective Repeat integration points.
+
+### Protanu
+
+-   Add a basic packet-loss simulation.
+-   Test the system under small packet-loss rates.
+-   Record transfer completion and retransmission counts.
+-   Prepare initial performance graphs.
+
+### Week 3 Deliverables
+
+-   ACK mechanism.
+-   Timeout mechanism.
+-   Retransmission mechanism.
+-   Basic packet-loss recovery.
+-   Duplicate and out-of-order packet handling.
+-   Initial reliability test results.
+
+------------------------------------------------------------------------
+
+## Week 4 --- Stop-and-Wait Reliability Testing and Baseline Measurements
+
+### Target
+
+Complete and stabilize a reliable Stop-and-Wait version before adding
+sliding-window functionality.
+
+### Somprakash
+
+-   Fix packet-format bugs.
+-   Improve file reconstruction.
+-   Test files of different sizes.
+-   Confirm that reconstructed files match the originals.
+
+### Abhipsa
+
+-   Stabilize ACK and retransmission logic.
+-   Test different timeout values.
+-   Record retransmission counts.
+-   Test packet loss, duplicate packets, and corrupted packets.
+-   Document reliability behaviour.
+
+### Sahil
+
+-   Implement a basic Stop-and-Wait sender/receiver flow.
+-   Prepare the first sliding-window prototype.
+-   Define window-size configuration.
+-   Test how ACKs will move the window.
+
+### Protanu
+
+-   Measure baseline performance.
+-   Compare transfer with and without packet loss.
+-   Record:
+    -   Transfer time.
+    -   Throughput.
+    -   Retransmission count.
+    -   Completion status.
+-   Generate the first graphs.
+
+### Week 4 Deliverables
+
+-   Stable Stop-and-Wait version.
+-   Baseline measurements.
+-   Initial graphs.
+-   Test report.
+-   Decision on Go-Back-N or Selective Repeat.
+
+------------------------------------------------------------------------
+
+## Week 5 --- Sliding Window and Flow Control
+
+### Target
+
+Implement sliding-window transfer and improve performance over
+Stop-and-Wait.
+
+### Somprakash
+
+-   Integrate packet format with window-based transmission.
+-   Ensure sequence numbers work correctly with multiple packets in
+    transit.
+-   Support packet buffering for reconstruction.
+
+### Abhipsa
+
+-   Integrate ACK and retransmission logic with the sliding window.
+-   Handle timeout for unacknowledged packets.
+-   Handle duplicate and delayed ACKs.
+-   Maintain retransmission statistics.
+
+### Sahil
+
+-   Implement sender window.
+-   Implement receiver window.
+-   Implement window movement.
+-   Implement Go-Back-N or Selective Repeat.
+-   Implement flow control.
+-   Test different window sizes.
+-   Synchronize transfer completion.
+
+### Protanu
+
+-   Measure Stop-and-Wait vs. Sliding Window.
+-   Test different window sizes.
+-   Record throughput and completion time.
+-   Prepare comparison graphs.
+-   Check performance under packet loss.
+
+### Week 5 Deliverables
+
+-   Working sliding-window protocol.
+-   Go-Back-N or Selective Repeat.
+-   Flow-control mechanism.
+-   Window-size experiments.
+-   Stop-and-Wait comparison.
+
+------------------------------------------------------------------------
+
+## Week 6 --- Network Emulator and Complete System Integration
+
+### Target
+
+Integrate all modules and test the complete system under controlled
+network conditions.
+
+### Somprakash
+
+-   Integrate the complete UDP communication layer.
+-   Fix packet-format and file-reconstruction issues.
+-   Test full file transfer from sender to receiver.
+
+### Abhipsa
+
+-   Integrate reliability mechanisms with the complete protocol.
+-   Test retransmission under loss and delay.
+-   Verify correct handling of corrupted, duplicate, and out-of-order
+    packets.
+
+### Sahil
+
+-   Integrate sliding-window and flow-control modules.
+-   Test Go-Back-N or Selective Repeat under network problems.
+-   Verify that the sender and receiver remain synchronized.
+
+### Protanu
+
+-   Implement packet-loss simulation.
+-   Implement delay simulation.
+-   Implement reordering simulation.
+-   Connect the emulator with sender and receiver.
+-   Create automated experiment scripts.
+
+### Week 6 Deliverables
+
+-   Complete integrated system.
+-   Network emulator.
+-   Packet-loss, delay, and reordering tests.
+-   End-to-end file-transfer demonstration.
+-   Updated documentation.
+
+------------------------------------------------------------------------
+
+## Week 7 --- Performance Experiments and Data Collection
+
+### Target
+
+Run systematic experiments and collect reliable data for the final
+report.
+
+### Somprakash
+
+-   Test packetization and file reconstruction with different file
+    sizes.
+-   Verify file integrity after every experiment.
+-   Help debug transfer failures.
+
+### Abhipsa
+
+-   Collect retransmission statistics.
+-   Test different timeout values.
+-   Analyze how packet loss affects reliability.
+-   Verify successful recovery under difficult conditions.
+
+### Sahil
+
+-   Test different window sizes.
+-   Compare Go-Back-N and Selective Repeat if both are implemented.
+-   Analyze the effect of flow control on throughput.
+-   Help optimize the transfer process.
+
+### Protanu
+
+-   Run automated experiments.
+-   Test different:
+    -   File sizes.
+    -   Packet-loss rates.
+    -   Delay values.
+    -   Window sizes.
+-   Save results in CSV files.
+-   Generate graphs.
+-   Prepare tables for the report.
+
+### Week 7 Deliverables
+
+-   Complete experiment dataset.
+-   CSV result files.
+-   Performance graphs.
+-   Comparison tables.
+-   Preliminary conclusion.
+
+------------------------------------------------------------------------
+
+## Week 8 --- Final Debugging, Documentation, and Demonstration
+
+### Target
+
+Prepare the final working project, GitHub repository, report, and
+presentation.
+
+### Somprakash
+
+-   Finalize UDP and packet-format documentation.
+-   Fix remaining communication bugs.
+-   Prepare the packet-structure explanation for the viva.
+-   Demonstrate file reconstruction and checksum verification.
+
+### Abhipsa
+
+-   Finalize reliability documentation.
+-   Prepare explanation of ACKs, timeout, retransmission, and
+    packet-loss recovery.
+-   Test edge cases.
+-   Prepare the reliability part of the presentation.
+
+### Sahil
+
+-   Finalize sliding-window documentation.
+-   Prepare explanation of Go-Back-N/Selective Repeat and flow control.
+-   Demonstrate the effect of window size.
+-   Test transfer synchronization.
+
+### Protanu
+
+-   Finalize graphs and result analysis.
+-   Prepare the experiment methodology.
+-   Organize CSV files and screenshots.
+-   Prepare the performance-analysis part of the presentation.
+
+### All Members
+
+-   Run the complete system.
+-   Fix integration issues.
+-   Review the README.
+-   Review code and comments.
+-   Update documentation.
+-   Make final GitHub commits.
+-   Prepare the final demonstration.
+-   Practice the viva and presentation.
+
+### Week 8 Deliverables
+
+-   Final working project.
+-   Complete GitHub repository.
+-   README.
+-   Work split document.
+-   Experiment results.
+-   Graphs and tables.
+-   Final report.
+-   Final presentation.
+-   Demonstration of reliable file transfer.
+
+------------------------------------------------------------------------
+
+# 4. Suggested GitHub Repository Structure
+
+``` text
+reliable-udp-file-transfer/
+│
+├── src/
+│   ├── udp_sender.py
+│   ├── udp_receiver.py
+│   ├── packet.py
+│   ├── checksum.py
+│   ├── file_utils.py
+│   ├── reliability.py
+│   ├── ack_manager.py
+│   ├── retransmission.py
+│   ├── timeout.py
+│   ├── receiver_buffer.py
+│   ├── sliding_window.py
+│   ├── sender_window.py
+│   ├── receiver_window.py
+│   ├── go_back_n.py
+│   └── selective_repeat.py
+│
+├── experiments/
+│   ├── network_emulator.py
+│   ├── load_generator.py
+│   ├── metrics.py
+│   ├── run_experiments.py
+│   ├── analyze_results.py
+│   └── plots.py
+│
+├── tests/
+│   ├── test_packet.py
+│   ├── test_checksum.py
+│   ├── test_reliability.py
+│   ├── test_sliding_window.py
+│   ├── test_file_transfer.py
+│   └── test_network_emulator.py
+│
+├── results/
+│   ├── csv/
+│   └── graphs/
+│
+├── docs/
+│   ├── architecture.md
+│   ├── packet-format.md
+│   ├── protocol-design.md
+│   └── experiments.md
+│
+├── README.md
+├── WORKSPLIT.md
+├── requirements.txt
+└── AI-USE.md
+```
+
+------------------------------------------------------------------------
+
+# 5. GitHub Commit Plan
+
+Each member should make at least one meaningful commit every week. The
+commit should contain actual work, such as code, tests, documentation,
+experiment scripts, or analysis.
+
+## Week 1
+
+-   **Somprakash:** `feat: add basic UDP sender and receiver`
+-   **Abhipsa:** `docs: define ACK and reliability design`
+-   **Sahil:** `docs: design sliding window structure`
+-   **Protanu:** `chore: initialize repository and test structure`
+
+## Week 2
+
+-   **Somprakash:** `feat: add packetization and checksum`
+-   **Abhipsa:** `test: add packet loss and sequence number tests`
+-   **Sahil:** `feat: add initial window data structures`
+-   **Protanu:** `feat: add transfer timing and CSV logging`
+
+## Week 3
+
+-   **Somprakash:** `feat: support ACK packet format`
+-   **Abhipsa:** `feat: add timeout and retransmission`
+-   **Sahil:** `feat: connect ACKs with sender window`
+-   **Protanu:** `feat: add basic packet loss emulator`
+
+## Week 4
+
+-   **Somprakash:** `fix: improve file reconstruction`
+-   **Abhipsa:** `test: stabilize stop and wait reliability`
+-   **Sahil:** `feat: add stop and wait transfer flow`
+-   **Protanu:** `docs: add baseline performance graphs`
+
+## Week 5
+
+-   **Somprakash:** `feat: support window-based packet buffering`
+-   **Abhipsa:** `feat: integrate retransmission with sliding window`
+-   **Sahil:** `feat: implement Go Back N sliding window`
+-   **Protanu:** `feat: add window size benchmark`
+
+## Week 6
+
+-   **Somprakash:** `fix: integrate UDP communication modules`
+-   **Abhipsa:** `test: verify recovery under delay and loss`
+-   **Sahil:** `fix: synchronize sender and receiver windows`
+-   **Protanu:** `feat: add delay and reordering simulation`
+
+## Week 7
+
+-   **Somprakash:** `test: verify file integrity for all workloads`
+-   **Abhipsa:** `feat: collect retransmission statistics`
+-   **Sahil:** `test: compare different window sizes`
+-   **Protanu:** `feat: automate performance experiments`
+
+## Week 8
+
+-   **Somprakash:** `docs: finalize packet format documentation`
+-   **Abhipsa:** `docs: finalize reliability explanation`
+-   **Sahil:** `docs: finalize sliding window documentation`
+-   **Protanu:** `docs: finalize graphs and experiment analysis`
+
+> Commit messages are examples. Each member should commit the actual
+> work they completed during that week.
+
+------------------------------------------------------------------------
+
+# 6. Definition of Done
+
+The project will be considered complete when:
+
+-   The sender can read and split a file into packets.
+-   The receiver can reconstruct the original file.
+-   Packets contain sequence numbers and checksums.
+-   ACKs are exchanged correctly.
+-   Lost packets can be retransmitted.
+-   Duplicate and out-of-order packets are handled.
+-   Sliding-window transfer works.
+-   Go-Back-N or Selective Repeat is implemented.
+-   Packet loss, delay, and reordering can be simulated.
+-   The system can measure latency, throughput, and retransmissions.
+-   The team has generated graphs and analyzed the results.
+-   The complete project is documented on GitHub.
+-   All four members have contributed code, tests, documentation, or
+    experiments.
+
+------------------------------------------------------------------------
+
+# 7. Important Scope Control
+
+To finish within eight weeks, the team should follow this implementation
+order:
+
+1.  Basic UDP file transfer.
+2.  Packet format and checksum.
+3.  Stop-and-Wait reliability.
+4.  Sliding Window.
+5.  Go-Back-N.
+6.  Network emulator.
+7.  Performance experiments.
+8.  Optional Selective Repeat.
+
+**Selective Repeat, advanced RTO estimation, packet duplication
+simulation, and extra optimizations should be treated as optional
+extensions.** The basic reliable UDP transfer with sliding window,
+retransmission, checksum, and experiments should be completed first.
+
+------------------------------------------------------------------------
+
+# 8. Final Team Contribution Summary
+
+  ------------------------------------------------------------------------
+  Member                  Main Technical           Main Demonstration
+                          Contribution             
+  ----------------------- ------------------------ -----------------------
+  **Somprakash**          UDP communication,       How a file is split,
+                          packet format, sequence  transmitted, verified,
+                          numbers, checksum, file  and reconstructed
+                          reconstruction           
+
+  **Abhipsa**             ACKs, timeout,           How lost packets are
+                          retransmission,          detected and
+                          duplicate/out-of-order   retransmitted
+                          handling                 
+
+  **Sahil**               Sliding window,          How multiple packets
+                          Go-Back-N/Selective      are transmitted and how
+                          Repeat, flow control     the window moves
+
+  **Protanu**             Network emulator,        How packet loss and
+                          experiments, metrics,    delay affect
+                          graphs, result analysis  performance
+  ------------------------------------------------------------------------
+
+## Final Statement
+
+This work split gives each member a separate technical responsibility
+while ensuring that the complete project is developed collaboratively.
+The team will first create a basic UDP file-transfer system, then add
+reliability, sliding-window flow control, network emulation, and
+performance analysis. The final outcome will be a working reliable
+file-transfer protocol implemented over UDP and evaluated under
+different network conditions.
