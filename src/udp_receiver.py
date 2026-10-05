@@ -9,7 +9,8 @@ checksums, and file reconstruction supporting out-of-order arrival.
 import socket
 import argparse
 import sys
-from packet import Packet, PACKET_TYPE_START, PACKET_TYPE_DATA, PACKET_TYPE_END
+import random
+from packet import Packet, PACKET_TYPE_START, PACKET_TYPE_DATA, PACKET_TYPE_END, create_ack_packet
 from file_utils import reconstruct_file_from_dict
 
 
@@ -26,12 +27,16 @@ def receive_packets(host: str, port: int, output_file: str = None) -> None:
     try:
         # Bind socket to host and port
         sock.bind((host, port))
+        sock.settimeout(1.0)
         print(f"Listening on {host}:{port}")
         print("Waiting for packets... (Press Ctrl+C to stop)")
         
         while True:
             # Receive data
-            data, addr = sock.recvfrom(65535)  # Max UDP datagram size
+            try:
+                data, addr = sock.recvfrom(65535)  # Max UDP datagram size
+            except socket.timeout:
+                continue   # no packet in the last 1s, just loop and check for Ctrl+C again
             
             # Deserialize packet
             packet = Packet.deserialize(data)
@@ -53,44 +58,53 @@ def receive_packets(host: str, port: int, output_file: str = None) -> None:
                 received_packets.clear()
                 expected_packet_count = None
                 transfer_active = True
-                
+
             elif packet.packet_type == PACKET_TYPE_DATA:
                 if not transfer_active:
                     print(f"Received DATA packet before START from {addr}")
                     continue
-                    
-                # Store packet by sequence number
-                received_packets[packet.sequence_number] = packet
-                print(f"Received DATA packet {packet.sequence_number} from {addr} " f"({packet.payload_length} bytes) - {status}")
-                
+
+                if packet.sequence_number in received_packets:
+                    print(f"Duplicate DATA packet {packet.sequence_number} received")
+                else:
+                    received_packets[packet.sequence_number] = packet
+                    print(
+                        f"Received DATA packet {packet.sequence_number} from {addr} "
+                        f"({packet.payload_length} bytes) - {status}"
+                    )
+
+                ack = create_ack_packet(packet.sequence_number)
+                sock.sendto(ack.serialize(), addr)
+                print(f"Sent ACK {packet.sequence_number} to {addr}")
+
             elif packet.packet_type == PACKET_TYPE_END:
                 print(f"Received END packet from {addr}")
                 expected_packet_count = packet.sequence_number
                 transfer_active = False
-                
+
                 # Reconstruct file if output file specified
                 if output_file and received_packets:
                     print(f"Reconstructing file from {len(received_packets)} packets...")
                     success = reconstruct_file_from_dict(
-                        received_packets, 
-                        output_file, 
+                        received_packets,
+                        output_file,
                         expected_packet_count
                     )
-                    
+
                     if success:
                         print(f"File reconstructed successfully: {output_file}")
                     else:
-                        print(f"File reconstruction failed")
-                    
+                        print("File reconstruction failed")
+
                     # Clear for next transfer
                     received_packets.clear()
                 else:
                     print(f"Received {len(received_packets)} data packets")
                     if not output_file:
                         print("(No output file specified - data not saved)")
-                    
+
                     received_packets.clear()
-            
+
             else:
                 print(f"Received unknown packet type {packet.packet_type} from {addr}")
                 
