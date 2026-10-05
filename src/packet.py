@@ -7,6 +7,7 @@ from checksum import generate_checksum, verify_checksum
 PACKET_TYPE_DATA = 1
 PACKET_TYPE_START = 2
 PACKET_TYPE_END = 3
+PACKET_TYPE_ACK = 4
 
 
 # Header contains:
@@ -94,7 +95,8 @@ class Packet:
         type_names = {
             PACKET_TYPE_START: "START",
             PACKET_TYPE_DATA: "DATA",
-            PACKET_TYPE_END: "END"
+            PACKET_TYPE_END: "END",
+            PACKET_TYPE_ACK: "ACK"
         }
 
         # Get the packet type name
@@ -125,6 +127,9 @@ def create_data_packet(sequence_number, payload):
 def create_end_packet(sequence_number):
     return Packet(PACKET_TYPE_END, sequence_number, b"")
 
+# Create an ACK packet
+def create_ack_packet(sequence_number):
+    return Packet(PACKET_TYPE_ACK, sequence_number, b"")
 
 # Main program
 if __name__ == "__main__":

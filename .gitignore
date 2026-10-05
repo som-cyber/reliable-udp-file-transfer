@@ -38,3 +38,6 @@ Thumbs.db
 # Test output files
 test-data/*.received
 test-data/*.output
+
+src/received.txt
+src/retransmission_stats.csv
