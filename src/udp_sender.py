@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-UDP Sender - Week 2 Milestone (Packetization)
-
-A UDP sender that sends text messages or file contents using packetization.
-This implementation includes chunking, sequence numbering, and checksums.
-"""
+# UDP Sender - Week 2 Milestone (Packetization)
 
 import time
 import socket

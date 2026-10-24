@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-UDP Receiver - Week 2 Milestone (Packetization)
-
-A UDP receiver that handles packetized data with sequence numbers,
-checksums, and file reconstruction supporting out-of-order arrival.
-"""
+# UDP Receiver - Week 2 Milestone (Packetization)
 
 import socket
 import argparse
