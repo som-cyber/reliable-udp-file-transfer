@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Standalone tests for duplicate / out-of-order / corruption handling.
-Tests the receiver's core logic directly, without sockets, so this
-doesn't depend on Sahil's sliding window being finished.
-"""
+# Standalone tests for duplicate / out-of-order / corruption handling
 
 from packet import create_data_packet, create_ack_packet, PACKET_TYPE_DATA
 from file_utils import reconstruct_file_from_dict
