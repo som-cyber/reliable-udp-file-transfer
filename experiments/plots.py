@@ -5,6 +5,8 @@ import os
 import sys
 import tempfile
 import argparse
+import platform
+import subprocess
 import pandas as pd
 import numpy as np
 from typing import List
@@ -282,6 +284,152 @@ def plot_unreliable_vs_reliable(df: pd.DataFrame, output_dir: str) -> str:
     return out_path
 
 
+def open_image(image_path: str) -> None:
+    # Opens the image using the OS default viewer
+    if not os.path.exists(image_path):
+        print(f"[ERROR] Image file not found: {image_path}")
+        return
+
+    print(f"[OPEN] Opening dashboard image: {image_path}")
+    try:
+        if platform.system() == "Windows":
+            os.startfile(image_path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", image_path], check=True)
+        else:  # Linux
+            subprocess.run(["xdg-open", image_path], check=True)
+    except Exception as e:
+        print(f"[WARNING] Could not open image automatically: {e}")
+        print(f"[INFO] Please open the file manually: {image_path}")
+
+
+def plot_presentation_dashboard(csv_filepath: str, output_dir: str) -> str:
+    # Generates a presentation-specific dashboard with timing comparisons
+    # Contains: Throughput vs delay, Transfer duration vs delay, Window-size comparison, Results table
+    if not os.path.exists(csv_filepath):
+        print(f"[PLOTS] Error: CSV file '{csv_filepath}' does not exist.")
+        return ""
+
+    os.makedirs(output_dir, exist_ok=True)
+    setup_plot_style()
+
+    df = pd.read_csv(csv_filepath)
+    if df.empty:
+        print("[PLOTS] Warning: CSV file is empty.")
+        return ""
+
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+    fig.suptitle("Reliable UDP File Transfer - Presentation Dashboard", fontsize=18, fontweight="bold", y=0.98)
+
+    # Filter for presentation experiments (loss=0%, small file)
+    pres_df = df[df["simulated_loss_rate"] == 0.0].copy()
+    if pres_df.empty:
+        pres_df = df.copy()
+
+    # 1. Throughput vs Network Delay
+    ax1 = fig.add_subplot(gs[0, 0])
+    for w in sorted(pres_df["window_size"].unique()):
+        w_df = pres_df[pres_df["window_size"] == w]
+        if not w_df.empty:
+            g = w_df.groupby("simulated_delay_ms")["throughput_kb_per_sec"].mean().reset_index()
+            g = g.sort_values("simulated_delay_ms")
+            label = "Stop-and-Wait (W=1)" if w == 1 else f"Sliding Window (W={w})"
+            color = "#e74c3c" if w == 1 else "#3498db"
+            ax1.plot(g["simulated_delay_ms"], g["throughput_kb_per_sec"], marker="o", label=label, color=color, linewidth=2, markersize=8)
+    ax1.set_title("Throughput vs Network Delay", fontweight="bold", fontsize=12)
+    ax1.set_xlabel("Network Delay (ms)", fontsize=11)
+    ax1.set_ylabel("Throughput (KB/s)", fontsize=11)
+    ax1.grid(True, linestyle="--", alpha=0.6)
+    ax1.legend(fontsize=10)
+
+    # 2. Transfer Duration vs Network Delay
+    ax2 = fig.add_subplot(gs[0, 1])
+    for w in sorted(pres_df["window_size"].unique()):
+        w_df = pres_df[pres_df["window_size"] == w]
+        if not w_df.empty:
+            g = w_df.groupby("simulated_delay_ms")["transfer_time_sec"].mean().reset_index()
+            g = g.sort_values("simulated_delay_ms")
+            label = "Stop-and-Wait (W=1)" if w == 1 else f"Sliding Window (W={w})"
+            color = "#e74c3c" if w == 1 else "#3498db"
+            ax2.plot(g["simulated_delay_ms"], g["transfer_time_sec"], marker="s", label=label, color=color, linewidth=2, markersize=8)
+    ax2.set_title("Transfer Duration vs Network Delay", fontweight="bold", fontsize=12)
+    ax2.set_xlabel("Network Delay (ms)", fontsize=11)
+    ax2.set_ylabel("Transfer Time (seconds)", fontsize=11)
+    ax2.grid(True, linestyle="--", alpha=0.6)
+    ax2.legend(fontsize=10)
+
+    # 3. Window-Size Performance Comparison (Bar Chart)
+    ax3 = fig.add_subplot(gs[1, :])
+    delay_data = pres_df[pres_df["simulated_delay_ms"] == 20.0]
+    if delay_data.empty:
+        delay_data = pres_df
+
+    if not delay_data.empty:
+        window_sizes = sorted(delay_data["window_size"].unique())
+        throughputs = []
+        for w in window_sizes:
+            w_df = delay_data[delay_data["window_size"] == w]
+            avg_throughput = w_df["throughput_kb_per_sec"].mean()
+            throughputs.append(avg_throughput)
+
+        colors = ["#e74c3c" if w == 1 else "#3498db" for w in window_sizes]
+        labels = ["Stop-and-Wait\n(W=1)" if w == 1 else f"Sliding Window\n(W={w})" for w in window_sizes]
+        bars = ax3.bar(range(len(window_sizes)), throughputs, color=colors, alpha=0.8, edgecolor="black", linewidth=1.5)
+        ax3.set_xticks(range(len(window_sizes)))
+        ax3.set_xticklabels(labels, fontsize=10)
+        ax3.set_title("Window-Size Performance Comparison (at 20ms delay)", fontweight="bold", fontsize=12)
+        ax3.set_ylabel("Throughput (KB/s)", fontsize=11)
+        ax3.grid(True, linestyle="--", alpha=0.6, axis="y")
+
+        # Add value labels on bars
+        for bar, val in zip(bars, throughputs):
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height, f"{val:.1f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+
+    # 4. Results Table
+    ax4 = fig.add_subplot(gs[2, :])
+    ax4.axis("off")
+
+    # Create table data
+    table_data = []
+    headers = ["Delay (ms)", "Window Size", "Protocol", "Transfer Time (s)", "Throughput (KB/s)", "Retransmissions"]
+
+    for _, row in pres_df.iterrows():
+        delay = f"{int(row['simulated_delay_ms'])}"
+        w = int(row['window_size'])
+        protocol = "Stop-and-Wait" if w == 1 else f"Sliding Window (W={w})"
+        time_val = f"{row['transfer_time_sec']:.4f}"
+        throughput = f"{row['throughput_kb_per_sec']:.2f}"
+        retrans = f"{int(row['retransmissions'])}"
+        table_data.append([delay, w, protocol, time_val, throughput, retrans])
+
+    if table_data:
+        table = ax4.table(cellText=table_data, colLabels=headers, cellLoc="center", loc="center")
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.2, 1.5)
+
+        # Style header row
+        for i in range(len(headers)):
+            table[(0, i)].set_facecolor("#34495e")
+            table[(0, i)].set_text_props(weight="bold", color="white")
+
+        # Alternate row colors
+        for i in range(1, len(table_data) + 1):
+            if i % 2 == 0:
+                for j in range(len(headers)):
+                    table[(i, j)].set_facecolor("#ecf0f1")
+
+    ax4.set_title("Measured Results Summary", fontweight="bold", fontsize=12, pad=10)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = os.path.join(output_dir, "presentation_dashboard.png")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    return out_path
+
+
 def plot_performance_dashboard(df: pd.DataFrame, output_dir: str) -> str:
     # Graph 8: Comprehensive 6-panel summary dashboard
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
@@ -400,8 +548,12 @@ def generate_all_plots(csv_filepath: str, output_dir: str) -> List[str]:
         plot_performance_dashboard(df, output_dir),
     ]
 
+    print("\n[Generated Graphs]")
     for p in plots_generated:
-        print(f"  [SAVED] {p}")
+        print(f"  - {p}")
+
+    print(f"\n[INFO] Total graphs generated: {len(plots_generated)}")
+    print(f"[INFO] Graphs directory: {output_dir}")
 
     return plots_generated
 
@@ -410,9 +562,19 @@ def main():
     parser = argparse.ArgumentParser(description="Performance Graphs Generator")
     parser.add_argument("--csv", default=DEFAULT_CSV_PATH, help="Path to raw CSV file")
     parser.add_argument("--output", default=DEFAULT_OUTPUT_DIR, help="Directory to save graphs")
+    parser.add_argument("--presentation", action="store_true", help="Generate presentation dashboard only")
+    parser.add_argument("--open", action="store_true", help="Open generated dashboard with default viewer")
     args = parser.parse_args()
 
-    generate_all_plots(args.csv, args.output)
+    if args.presentation:
+        dashboard_path = plot_presentation_dashboard(args.csv, args.output)
+        if dashboard_path:
+            print(f"\n[Dashboard] {dashboard_path}")
+            print(f"[INFO] To open manually: {dashboard_path}")
+            if args.open:
+                open_image(dashboard_path)
+    else:
+        generate_all_plots(args.csv, args.output)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import subprocess
 import argparse
 import datetime
 import re
+import random
 import pandas as pd
 from typing import List, Dict, Any, Optional
 
@@ -34,6 +35,7 @@ CSV_DIR = os.path.join(RESULTS_DIR, "csv")
 GRAPHS_DIR = os.path.join(RESULTS_DIR, "graphs")
 RAW_CSV = os.path.join(CSV_DIR, "raw_experiment_results.csv")
 SUMMARY_CSV = os.path.join(CSV_DIR, "summary_experiment_results.csv")
+PRESENTATION_CSV = os.path.join(CSV_DIR, "presentation_results.csv")
 
 
 def parse_sender_retransmissions(stdout_text: str) -> int:
@@ -295,6 +297,61 @@ def run_single_transfer(
     return metrics
 
 
+def run_presentation_mode() -> List[TransferMetrics]:
+    # Runs a small, deterministic experiment set for university presentations
+    # 6 experiments total: small file (~10KB), window sizes 1 and 4, delays 0/20/50ms, 0% loss
+    print("\n============================================================")
+    print(" Reliable UDP File Transfer - Presentation Mode")
+    print(" Quick Demo for University Presentations")
+    print("============================================================\n")
+
+    # Set deterministic random seed
+    random.seed(42)
+
+    test_files = ensure_test_files()
+    all_metrics: List[TransferMetrics] = []
+
+    # Create a small 10KB test file for presentation
+    from load_generator import TEST_DATA_DIR
+    small_presentation_file = os.path.join(TEST_DATA_DIR, "sample_presentation.txt")
+    if not os.path.exists(small_presentation_file):
+        from load_generator import generate_test_file
+        print("[PRESENTATION] Creating 10KB presentation test file...")
+        generate_test_file(small_presentation_file, 10_000, seed=42)
+
+    exp_counter = 1
+
+    # ========================================================================
+    # PRESENTATION EXPERIMENTS: Timing comparisons with varying delays
+    # ========================================================================
+    print("\n>>> PRESENTATION: Timing Comparisons (6 experiments) <<<")
+
+    delays = [0.0, 20.0, 50.0]
+    window_sizes = [1, 4]
+
+    for delay in delays:
+        for window_size in window_sizes:
+            exp_id = f"PRES_delay_{int(delay)}ms_W{window_size}"
+            print(f"[{exp_counter:03d}] Running {exp_id} (Delay={delay}ms, W={window_size})...")
+            m = run_single_transfer(
+                file_path=small_presentation_file,
+                window_size=window_size,
+                loss_rate=0.0,
+                delay_ms=delay,
+                experiment_id=exp_id,
+            )
+            all_metrics.append(m)
+            save_metrics_to_csv(m, PRESENTATION_CSV)
+            print_metric_summary(m)
+            exp_counter += 1
+
+    print(f"\n[DONE] Presentation mode completed!")
+    print(f"  - Presentation Results CSV: {PRESENTATION_CSV}")
+    print(f"  - Total experiments: {len(all_metrics)}")
+
+    return all_metrics
+
+
 def run_experiment_matrix(quick: bool = False, runs_per_config: int = 1) -> List[TransferMetrics]:
     # Runs the experimental test matrix according to project specifications
     print("\n============================================================")
@@ -521,28 +578,47 @@ def generate_summary_csv(raw_csv_path: str, summary_csv_path: str) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Automated Network Experiment Runner")
     parser.add_argument("--quick", action="store_true", help="Run quick benchmark subset")
+    parser.add_argument("--presentation", action="store_true", help="Run small presentation demo (6 experiments)")
     parser.add_argument("--runs", type=int, default=1, help="Repetitions per configuration")
     parser.add_argument("--skip-plots", action="store_true", help="Skip graph generation")
+    parser.add_argument("--open", action="store_true", help="Open generated dashboard image")
     args = parser.parse_args()
 
-    # Clear prior raw CSV if fresh run is desired
-    # (or preserve if appending)
-    metrics = run_experiment_matrix(quick=args.quick, runs_per_config=args.runs)
+    if args.presentation:
+        # Run presentation mode
+        metrics = run_presentation_mode()
+        csv_path = PRESENTATION_CSV
+    else:
+        # Run full or quick experiment matrix
+        metrics = run_experiment_matrix(quick=args.quick, runs_per_config=args.runs)
+        csv_path = RAW_CSV
 
     if not args.skip_plots:
         try:
             print("\n[EXPERIMENTS] Triggering automated plot generation...")
             import plots
-            plots.generate_all_plots(RAW_CSV, GRAPHS_DIR)
+            if args.presentation:
+                # Generate presentation-specific dashboard
+                dashboard_path = plots.plot_presentation_dashboard(csv_path, GRAPHS_DIR)
+                print(f"\n[PRESENTATION] Dashboard generated: {dashboard_path}")
+                print(f"[INFO] To open manually: {dashboard_path}")
+                if args.open:
+                    plots.open_image(dashboard_path)
+            else:
+                # Generate all standard plots
+                plots.generate_all_plots(csv_path, GRAPHS_DIR)
         except Exception as e:
+            import traceback
             print(f"[WARNING] Could not generate plots automatically: {e}")
+            traceback.print_exc()
 
-        try:
-            print("\n[EXPERIMENTS] Triggering automated result analysis...")
-            import analyze_results
-            analyze_results.generate_analysis_report(RAW_CSV, RESULTS_DIR)
-        except Exception as e:
-            print(f"[WARNING] Could not generate analysis report: {e}")
+        if not args.presentation:
+            try:
+                print("\n[EXPERIMENTS] Triggering automated result analysis...")
+                import analyze_results
+                analyze_results.generate_analysis_report(csv_path, RESULTS_DIR)
+            except Exception as e:
+                print(f"[WARNING] Could not generate analysis report: {e}")
 
 
 if __name__ == "__main__":
