@@ -92,9 +92,7 @@ python experiments/test_emulator.py
 python src/test_reliability.py
 ```
 
-## 🎬 Presentation Demo (Recommended for Live Demos)
-
-### Quick Demo (6 experiments, ~7 seconds)
+## 🎬 Presentation Demo 
 
 ```bash
 # Run presentation experiments
@@ -106,10 +104,7 @@ python experiments/run_experiments.py --presentation --open
 
 This mode runs a minimal set of experiments for demonstration:
 - 10KB test file
-- Window sizes: 1 (Stop-and-Wait) and 4 (Sliding Window)
 - Network delays: 0ms, 20ms, 50ms
-- 0% packet loss (timing comparisons)
-- Fixed random seed for reproducibility
 
 ### Generate Dashboard from Existing Results
 
@@ -197,33 +192,6 @@ python experiments/plots.py --presentation
 | `results/csv/summary_experiment_results.csv` | Aggregated statistics by configuration |
 | `results/performance_analysis_report.md` | Comprehensive performance analysis report |
 | `results/graphs/*.png` | Individual performance graphs |
-
-## 🔧 Manual Transfer Testing
-
-### Start the Receiver
-
-```bash
-python src/udp_receiver.py --host 127.0.0.1 --port 5001 --output test-data/received.txt
-```
-
-### Start the Sender
-
-```bash
-# Send with Stop-and-Wait (W=1)
-python src/udp_sender.py --host 127.0.0.1 --port 5001 --file test-data/sample_small.txt --window-size 1
-
-# Send with Sliding Window (W=4)
-python src/udp_sender.py --host 127.0.0.1 --port 5001 --file test-data/sample_small.txt --window-size 4
-
-# Send custom window size
-python src/udp_sender.py --host 127.0.0.1 --port 5001 --file test-data/sample_small.txt --window-size 8
-```
-
-### Verify File Integrity
-
-```bash
-diff test-data/original.txt test-data/received.txt
-```
 
 ## 📋 Protocol Specifications
 
